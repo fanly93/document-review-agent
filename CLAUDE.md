@@ -47,6 +47,12 @@ AgentTeamProject/
 
 **配置方式**：前端环境变量通过 `.env.local`（不提交）管理，仅允许 `VITE_` / `NEXT_PUBLIC_` 前缀的变量。
 
+**本地开发与启动**（Vite + React）：
+- **工作目录**：仓库根目录下的 `frontend/`（绝对路径示例：`AgentTeamProject/frontend`）。
+- **安装依赖**：在 `frontend/` 下执行 `npm install`（首次或依赖变更后）。
+- **启动开发服务器**：在 `frontend/` 下执行 `npm run dev`；默认本地地址为 `http://localhost:5173/`（以终端输出为准）。
+- **生产构建**：在 `frontend/` 下执行 `npm run build`。
+
 ---
 
 ### 2.2 `backend/` — 后端服务

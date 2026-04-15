@@ -8,9 +8,12 @@
 !.env.local.example
 
 # ===========================
-# Python 运行环境（uv）
+# Python 运行环境（uv / 常见虚拟环境）
 # ===========================
 .venv/
+venv/
+ENV/
+env/
 __pycache__/
 *.pyc
 *.pyo
@@ -26,6 +29,17 @@ build/
 htmlcov/
 .coverage
 coverage.xml
+
+# ===========================
+# 本机 / 工具（可能含路径或敏感配置）
+# ===========================
+.envrc
+.claude/settings.local.json
+
+# 证书与常见私钥文件名（勿提交）
+*.pem
+id_rsa
+id_ed25519
 
 # ===========================
 # Node.js / 前端
