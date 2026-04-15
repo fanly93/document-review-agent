@@ -3,40 +3,36 @@
  * Base URL: /api/v1
  * 所有接口均需 Bearer Token (JWT) 认证
  *
- * 当前模式：MOCK（后端未连接时使用 mock 数据）
- * 后端接入后将 USE_MOCK 设为 false
+ * 当前模式：真实后端（USE_MOCK = false）
+ * 未开发接口保留 mock 数据并在 console 中标注
  */
 
 import {
-  MOCK_DOCUMENTS,
-  getMockTaskDetail,
-  getMockRiskItems,
   getMockTaskResult,
   getMockOperations,
   getMockAnnotations,
-  getMockAuditLogs,
-  getMockUploadInit,
-  getMockUploadComplete,
-  simulateWebSocketMessages,
   simulateAutoReviewMessages,
 } from './mock-data';
+import { getToken, ensureAuth } from './auth';
 
-const USE_MOCK = true; // 后端接入后设为 false
+const USE_MOCK = false;
 
 const BASE_URL = '/api/v1';
+// WebSocket 通过 Vite proxy 转发，使用相对路径
 const WS_BASE = `ws://${window.location.host}/ws/v1`;
-/** 仅本地 Mock；真实 JWT 请放在 frontend/.env.local 的 VITE_DEV_MOCK_TOKEN（勿提交） */
-const MOCK_TOKEN =
-  import.meta.env.VITE_DEV_MOCK_TOKEN || 'dev-mock-bearer-not-a-secret';
 
 function getHeaders(): Record<string, string> {
+  const token = getToken();
   return {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${MOCK_TOKEN}`,
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
   };
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  // 确保登录（无 token 时自动登录）
+  await ensureAuth();
+
   const res = await fetch(`${BASE_URL}${url}`, {
     ...options,
     headers: { ...getHeaders(), ...options?.headers },
@@ -120,33 +116,24 @@ export async function getDocuments(params?: {
   page_size?: number;
   status?: string;
 }) {
-  if (USE_MOCK) {
-    await delay(200);
-    let items = [...MOCK_DOCUMENTS];
-    if (params?.status) {
-      const statuses = params.status.split(',');
-      items = items.filter((i) => statuses.includes(i.task_status));
-    }
-    const page = params?.page || 1;
-    const pageSize = params?.page_size || 20;
-    const start = (page - 1) * pageSize;
-    return {
-      items: items.slice(start, start + pageSize),
-      total: items.length,
-      page,
-      page_size: pageSize,
-    };
+  // 【后端未开发】GET /api/v1/documents 文档列表接口后端尚未实现，使用 mock 数据
+  console.warn('【后端未开发】GET /api/v1/documents — 返回 mock 数据');
+  await delay(200);
+  const { MOCK_DOCUMENTS } = await import('./mock-data');
+  let items = [...MOCK_DOCUMENTS];
+  if (params?.status) {
+    const statuses = params.status.split(',');
+    items = items.filter((i) => statuses.includes(i.task_status));
   }
-  const qs = new URLSearchParams();
-  if (params?.page) qs.set('page', String(params.page));
-  if (params?.page_size) qs.set('page_size', String(params.page_size));
-  if (params?.status) qs.set('status', params.status);
-  return request<{
-    items: any[];
-    total: number;
-    page: number;
-    page_size: number;
-  }>(`/documents?${qs}`);
+  const page = params?.page || 1;
+  const pageSize = params?.page_size || 20;
+  const start = (page - 1) * pageSize;
+  return {
+    items: items.slice(start, start + pageSize),
+    total: items.length,
+    page,
+    page_size: pageSize,
+  };
 }
 
 // ============ 五、审核查询接口 ============
@@ -218,32 +205,24 @@ export async function getRiskItems(taskId: string, params?: {
 }
 
 export async function getTaskResult(taskId: string) {
-  if (USE_MOCK) {
-    await delay(200);
-    return getMockTaskResult(taskId);
-  }
-  return request<any>(`/tasks/${taskId}/result`);
+  // 【后端未开发】GET /api/v1/tasks/{task_id}/result 接口后端尚未实现，使用 mock 数据
+  console.warn('【后端未开发】GET /tasks/{task_id}/result — 返回 mock 数据');
+  await delay(200);
+  return getMockTaskResult(taskId);
 }
 
 export async function getOperations(taskId: string, params?: { page?: number; page_size?: number }) {
-  if (USE_MOCK) {
-    await delay(150);
-    return getMockOperations(taskId);
-  }
-  const qs = new URLSearchParams();
-  if (params?.page) qs.set('page', String(params.page));
-  if (params?.page_size) qs.set('page_size', String(params.page_size));
-  return request<{ items: any[]; total: number; page: number; page_size: number }>(`/tasks/${taskId}/operations?${qs}`);
+  // 【后端未开发】GET /api/v1/tasks/{task_id}/operations 接口后端尚未实现，使用 mock 数据
+  console.warn('【后端未开发】GET /tasks/{task_id}/operations — 返回 mock 数据');
+  await delay(150);
+  return getMockOperations(taskId);
 }
 
 export async function getAnnotations(taskId: string, riskItemId?: string) {
-  if (USE_MOCK) {
-    await delay(150);
-    return getMockAnnotations(taskId);
-  }
-  const qs = new URLSearchParams();
-  if (riskItemId) qs.set('risk_item_id', riskItemId);
-  return request<{ items: any[]; total: number; page: number; page_size: number }>(`/tasks/${taskId}/annotations?${qs}`);
+  // 【后端未开发】GET /api/v1/tasks/{task_id}/annotations 接口后端尚未实现，使用 mock 数据
+  console.warn('【后端未开发】GET /tasks/{task_id}/annotations — 返回 mock 数据');
+  await delay(150);
+  return getMockAnnotations(taskId);
 }
 
 export async function getAuditLogs(taskId: string, params?: {
@@ -275,102 +254,73 @@ export async function submitOperation(taskId: string, body: {
   } | null;
   operated_at: string;
 }) {
-  if (USE_MOCK) {
-    await delay(300);
-    // 模拟后端响应
-    const statusMap: Record<string, string> = {
-      approve: 'approved',
-      edit: 'edited',
-      reject_item: 'reviewer_rejected',
-      annotate: 'pending',
-    };
-    return {
-      operation_id: 'op-' + crypto.randomUUID().slice(0, 8),
+  // 后端接口契约：POST /tasks/{task_id}/operations
+  // 请求体为 { decisions: [{ risk_item_id, action, comment, edited_content, operated_at }] }
+  // 字段映射：reject_reason → comment，edited_fields → edited_content
+  const backendBody = {
+    decisions: [{
       risk_item_id: body.risk_item_id,
-      reviewer_status: statusMap[body.action] || 'pending',
-      pending_critical_high_count: Math.max(0, 3 - 1), // 模拟递减
-    };
-  }
-  return request<{
-    operation_id: string;
-    risk_item_id: string;
-    reviewer_status: string;
-    pending_critical_high_count: number;
-  }>(`/tasks/${taskId}/operations`, { method: 'POST', body: JSON.stringify(body) });
+      action: body.action,
+      comment: body.reject_reason ?? null,
+      edited_content: body.edited_fields ?? null,
+      operated_at: body.operated_at,
+    }],
+  };
+  const result = await request<any>(`/tasks/${taskId}/operations`, {
+    method: 'POST',
+    body: JSON.stringify(backendBody),
+  });
+  // 后端返回批量结果，取第一条适配前端单条格式
+  const first = Array.isArray(result) ? result[0] : result;
+  return {
+    operation_id: first?.operation_id ?? ('op-' + crypto.randomUUID().slice(0, 8)),
+    risk_item_id: body.risk_item_id,
+    reviewer_status: first?.reviewer_status ?? 'pending',
+    pending_critical_high_count: first?.pending_critical_high_count ?? 0,
+  };
 }
 
 export async function addAnnotation(taskId: string, body: {
   risk_item_id?: string;
   content: string;
 }) {
-  if (USE_MOCK) {
-    await delay(200);
-    return {
-      annotation_id: 'ann-' + crypto.randomUUID().slice(0, 8),
-      review_task_id: taskId,
-      risk_item_id: body.risk_item_id,
-      operator_id: 'user-reviewer-001',
-      content: body.content,
-      created_at: new Date().toISOString(),
-    };
-  }
-  return request<any>(`/tasks/${taskId}/annotations`, { method: 'POST', body: JSON.stringify(body) });
+  // 【后端未开发】POST /api/v1/tasks/{task_id}/annotations 接口后端尚未实现
+  console.warn('【后端未开发】POST /tasks/{task_id}/annotations — 返回 mock 响应');
+  await delay(200);
+  return {
+    annotation_id: 'ann-' + crypto.randomUUID().slice(0, 8),
+    review_task_id: taskId,
+    risk_item_id: body.risk_item_id,
+    operator_id: 'mock-reviewer',
+    content: body.content,
+    created_at: new Date().toISOString(),
+  };
 }
 
 export async function completeReview(taskId: string) {
-  if (USE_MOCK) {
-    await delay(400);
-    return {
-      task_id: taskId,
-      status: 'completed',
-      completed_at: new Date().toISOString(),
-    };
-  }
-  return request<{
-    task_id: string;
-    status: string;
-    completed_at: string;
-  }>(`/tasks/${taskId}/complete`, { method: 'POST' });
+  // 【后端未开发】POST /api/v1/tasks/{task_id}/complete 接口后端尚未实现
+  console.warn('【后端未开发】POST /tasks/{task_id}/complete — 返回 mock 响应');
+  await delay(400);
+  return {
+    task_id: taskId,
+    status: 'completed',
+    completed_at: new Date().toISOString(),
+  };
 }
 
 export async function rejectTask(taskId: string, rejectReason: string) {
-  if (USE_MOCK) {
-    await delay(300);
-    return {
-      task_id: taskId,
-      status: 'rejected',
-      reject_reason: rejectReason,
-    };
-  }
+  // 后端字段名为 reason（非 reject_reason）
   return request<{
     task_id: string;
     status: string;
-    reject_reason: string;
-  }>(`/tasks/${taskId}/reject`, { method: 'POST', body: JSON.stringify({ reject_reason: rejectReason }) });
+  }>(`/tasks/${taskId}/reject`, { method: 'POST', body: JSON.stringify({ reason: rejectReason }) });
 }
 
 // ============ 七、WebSocket ============
 
 export function connectTaskWebSocket(taskId: string, onMessage: (data: WsMessage) => void) {
-  if (USE_MOCK) {
-    // 返回一个模拟的 WebSocket 对象
-    const mock = simulateWebSocketMessages(taskId, onMessage);
-    // 模拟 ws 对象
-    const fakeWs = {
-      readyState: 1, // OPEN
-      close: () => mock.close(),
-      send: () => {},
-      onopen: null as any,
-      onclose: null as any,
-      onmessage: null as any,
-      onerror: null as any,
-    };
-    // 触发 onopen
-    setTimeout(() => fakeWs.onopen?.(), 100);
-    return fakeWs as any;
-  }
-
-  const url = `${WS_BASE}/tasks/${taskId}/progress?token=${MOCK_TOKEN}`;
+  const token = getToken() ?? '';
+  const url = `${WS_BASE}/tasks/${taskId}/progress?token=${token}`;
   const ws = new WebSocket(url);
   let pingInterval: ReturnType<typeof setInterval>;
 
@@ -392,24 +342,14 @@ export function connectTaskWebSocket(taskId: string, onMessage: (data: WsMessage
     clearInterval(pingInterval);
   };
 
+  ws.onerror = (err) => {
+    console.error('[WebSocket] 连接错误:', err);
+  };
+
   return ws;
 }
 
 export function connectAutoReviewWebSocket(taskId: string, onMessage: (data: WsMessage) => void) {
-  if (USE_MOCK) {
-    const mock = simulateAutoReviewMessages(taskId, onMessage);
-    const fakeWs = {
-      readyState: 1,
-      close: () => mock.close(),
-      send: () => {},
-      onopen: null as any,
-      onclose: null as any,
-      onmessage: null as any,
-      onerror: null as any,
-    };
-    setTimeout(() => fakeWs.onopen?.(), 100);
-    return fakeWs as any;
-  }
   return connectTaskWebSocket(taskId, onMessage);
 }
 

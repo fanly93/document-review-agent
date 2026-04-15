@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from app.models.review_task import ReviewTask, TaskStatus, VALID_TRANSITIONS, TERMINAL_STATES
 from app.models.document import Document
+from app.models.risk_item import RiskItem
 from app.models.audit_log import AuditLog
 from app.core.errors import raise_error
 from app.core.state_machine import validate_transition
@@ -37,6 +38,66 @@ def create_task_and_document(db: Session, document_data: dict, uploader_user_id:
     db.add(log)
     db.commit()
     return {"task_id": task_id, "document_id": document_data["document_id"]}
+
+
+def sync_workflow_to_db(db: Session, task_id: str, workflow_result: dict) -> None:
+    """
+    工作流完成后将图状态同步写入数据库。
+    直接覆盖状态（绕过逐步状态机），适合 MVP 同步触发场景。
+    同时批量写入 risk_items。
+    """
+    task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+    if not task:
+        return
+
+    final_status = workflow_result.get("current_status")
+    if final_status and final_status in [s.value for s in TaskStatus]:
+        task.status = TaskStatus(final_status)
+
+    risk_items_data = workflow_result.get("risk_items", [])
+    score_map = {"critical": 100, "high": 75, "medium": 50, "low": 25}
+    if risk_items_data:
+        scores = [score_map.get(i.get("risk_level", "low"), 25) for i in risk_items_data]
+        task.overall_risk_score = sum(scores) / len(scores)
+        levels = [i.get("risk_level") for i in risk_items_data]
+        if "critical" in levels:
+            task.risk_level_summary = "critical"
+        elif "high" in levels:
+            task.risk_level_summary = "high"
+        elif "medium" in levels:
+            task.risk_level_summary = "medium"
+        else:
+            task.risk_level_summary = "low"
+
+        # 清除旧风险项（避免重复写入），再批量插入
+        db.query(RiskItem).filter(RiskItem.task_id == task_id).delete()
+        for item in risk_items_data:
+            ri = RiskItem(
+                id=item.get("id") or str(uuid.uuid4()),
+                task_id=task_id,
+                risk_type=item.get("risk_type", "unknown"),
+                risk_level=item.get("risk_level", "medium"),
+                risk_description=item.get("risk_description", ""),
+                confidence_score=item.get("confidence", item.get("confidence_score", 0.5)),
+                confidence_category=item.get("confidence_category", "clause"),
+                reasoning=item.get("reasoning"),
+                location_page=item.get("location_page"),
+                location_paragraph=item.get("location_paragraph"),
+                reviewer_status=item.get("reviewer_status", "pending"),
+                source_references_json=item.get("source_references", []),
+            )
+            db.add(ri)
+
+    if final_status == "completed":
+        task.completed_at = datetime.now(timezone.utc)
+
+    log = AuditLog(
+        task_id=task_id, event_type="workflow_synced", actor_type="system",
+        detail_json={"final_status": final_status, "risk_items_count": len(risk_items_data)},
+        occurred_at=datetime.now(timezone.utc).isoformat(),
+    )
+    db.add(log)
+    db.commit()
 
 
 def transition_task_status(db: Session, task_id: str, new_status: str, actor_type: str = "system") -> ReviewTask:

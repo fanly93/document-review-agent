@@ -15,8 +15,8 @@ router = APIRouter(prefix="/tasks", tags=["review"])
 @router.post("/{task_id}/operations")
 def submit_operations(task_id: str, req: SubmitReviewRequest,
                       db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role != UserRole.reviewer:
-        raise_error("NOT_ASSIGNED_REVIEWER")
+    # MVP 联调阶段：暂时绕过 reviewer 角色限制，允许任意登录用户提交审核决策
+    # TODO: 生产环境需恢复: if current_user.role != UserRole.reviewer: raise_error("NOT_ASSIGNED_REVIEWER")
     graph = get_review_graph()
     result = submit_review_decisions(db, task_id,
                                      [d.model_dump() for d in req.decisions],
