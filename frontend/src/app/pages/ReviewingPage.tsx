@@ -1,12 +1,12 @@
 /**
  * P03 — 自动审核进度页 /tasks/:taskId/reviewing
- * WebSocket 订阅：auto_review_layer_update, auto_review_complete, auto_review_failed
- * 约束：禁止展示任何审核结论；禁止手动触发 HITL；禁止轮询
+ * WebSocket 订阅：auto_review_layer1/2/3, auto_review_complete, hitl_required, task_completed
+ * 兜底策略：工作流完成速度快于页面加载时，通过轮询任务状态驱动动画跳转
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { Layers, Search, Brain, CheckCircle2, Loader2, XCircle, AlertTriangle, Info } from 'lucide-react';
-import { connectAutoReviewWebSocket, type WsMessage } from '../api/client';
+import { connectAutoReviewWebSocket, getTaskDetail, type WsMessage } from '../api/client';
 
 interface LayerState {
   status: 'pending' | 'running' | 'done' | 'failed';
@@ -31,49 +31,90 @@ export function ReviewingPage() {
   });
   const [failed, setFailed] = useState<{ errorCode?: string; retryCount?: number } | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
+  const navigatedRef = useRef(false);
+  // fallback 动画运行中时，忽略 WS 的 layer 状态更新，避免两套动画冲突
+  const fallbackModeRef = useRef(false);
+
+  // 工作流已完成时：快速播放三层动画后跳转
+  const animateAndNavigate = useCallback((finalStatus: string) => {
+    if (navigatedRef.current) return;
+    navigatedRef.current = true;
+    fallbackModeRef.current = true;
+
+    setTimeout(() => setLayers({ layer1: { status: 'done' }, layer2: { status: 'running' }, layer3: { status: 'pending' } }), 400);
+    setTimeout(() => setLayers({ layer1: { status: 'done' }, layer2: { status: 'done' }, layer3: { status: 'running' } }), 1000);
+    setTimeout(() => setLayers({ layer1: { status: 'done' }, layer2: { status: 'done' }, layer3: { status: 'done' } }), 1800);
+    setTimeout(() => {
+      if (finalStatus === 'human_reviewing') {
+        navigate(`/tasks/${taskId}/human-review`);
+      } else if (finalStatus === 'completed') {
+        navigate(`/tasks/${taskId}/result`);
+      } else {
+        navigate(`/tasks/${taskId}`);
+      }
+    }, 2400);
+  }, [taskId, navigate]);
 
   useEffect(() => {
     if (!taskId) return;
 
+    // 兜底1：页面加载时立即检查任务状态（处理工作流已提前完成的情况）
+    getTaskDetail(taskId).then((detail) => {
+      const status = detail.task.status;
+      if (
+        status === 'completed' ||
+        status === 'human_reviewing' ||
+        status === 'rejected' ||
+        status === 'auto_review_failed' ||
+        status === 'human_review_failed'
+      ) {
+        animateAndNavigate(status);
+      }
+    }).catch(() => {});
+
+    // 兜底2：12 秒内无 WS 事件推进，再次轮询状态
+    const fallbackTimer = setTimeout(async () => {
+      if (navigatedRef.current) return;
+      try {
+        const detail = await getTaskDetail(taskId);
+        animateAndNavigate(detail.task.status);
+      } catch {}
+    }, 12000);
+
     const ws = connectAutoReviewWebSocket(taskId, (msg: WsMessage) => {
       switch (msg.event) {
         case 'auto_review_layer1':
-          setLayers((prev) => ({
-            ...prev,
-            layer1: { status: 'done' },
-            layer2: { status: 'running' },
-          }));
+          if (!fallbackModeRef.current)
+            setLayers((prev) => ({ ...prev, layer1: { status: 'done' }, layer2: { status: 'running' } }));
           break;
         case 'auto_review_layer2':
-          setLayers((prev) => ({
-            ...prev,
-            layer2: { status: 'done' },
-            layer3: { status: 'running' },
-          }));
+          if (!fallbackModeRef.current)
+            setLayers((prev) => ({ ...prev, layer2: { status: 'done' }, layer3: { status: 'running' } }));
           break;
         case 'auto_review_layer3':
-          setLayers((prev) => ({
-            ...prev,
-            layer3: { status: 'done' },
-          }));
+          if (!fallbackModeRef.current)
+            setLayers((prev) => ({ ...prev, layer3: { status: 'done' } }));
           break;
-        case 'auto_review_complete': {
-          setTimeout(() => {
-            navigate(`/tasks/${taskId}`);
-          }, 1000);
+        case 'auto_review_complete':
+          if (!navigatedRef.current) {
+            navigatedRef.current = true;
+            setTimeout(() => navigate(`/tasks/${taskId}`), 1000);
+          }
           break;
-        }
         case 'hitl_required':
-          navigate(`/tasks/${taskId}/human-review`);
+          if (!navigatedRef.current) {
+            navigatedRef.current = true;
+            navigate(`/tasks/${taskId}/human-review`);
+          }
           break;
         case 'task_completed':
-          navigate(`/tasks/${taskId}/result`);
+          if (!navigatedRef.current) {
+            navigatedRef.current = true;
+            navigate(`/tasks/${taskId}/result`);
+          }
           break;
         case 'auto_review_failed':
-          setFailed({
-            errorCode: msg.data?.error_code,
-            retryCount: msg.data?.retry_count,
-          });
+          setFailed({ errorCode: msg.data?.error_code, retryCount: msg.data?.retry_count });
           break;
       }
     });
@@ -83,8 +124,11 @@ export function ReviewingPage() {
     ws.onerror = () => ws.close();
     wsRef.current = ws;
 
-    return () => ws.close();
-  }, [taskId]);
+    return () => {
+      clearTimeout(fallbackTimer);
+      ws.close();
+    };
+  }, [taskId, animateAndNavigate]);
 
   const layerEntries = LAYERS.map((l) => ({
     ...l,

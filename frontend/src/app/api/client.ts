@@ -26,8 +26,11 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     headers: { ...getHeaders(), ...options?.headers },
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ code: 'UNKNOWN', message: res.statusText }));
-    throw err;
+    const body = await res.json().catch(() => null);
+    const detail = body?.detail;
+    const message = (typeof detail === 'object' ? detail?.message : detail) || body?.message || res.statusText || '请求失败';
+    const code = (typeof detail === 'object' ? detail?.code : null) || 'UNKNOWN';
+    throw { code, message, status: res.status };
   }
   const json = await res.json();
   return json.data;

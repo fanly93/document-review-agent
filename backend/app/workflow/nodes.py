@@ -149,12 +149,10 @@ def auto_review_node(state: ReviewState) -> dict:
         })
 
     # Layer 3: LLM 深度分析（降级保护）
+    # 空数组是合法响应（未发现风险），只有 LLM 真正抛出异常才降级
     try:
         llm_items = _call_llm_review(content, doc_type)
-        if llm_items:
-            risk_items.extend(llm_items)
-        else:
-            raise ValueError("LLM 返回空结果，触发降级")
+        risk_items.extend(llm_items)
     except Exception as llm_err:
         # 降级：保留原 MVP 硬编码结果，记录原因
         risk_items.append({

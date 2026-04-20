@@ -68,6 +68,10 @@ def sync_workflow_to_db(db: Session, task_id: str, workflow_result: dict) -> Non
             task.risk_level_summary = "medium"
         else:
             task.risk_level_summary = "low"
+    else:
+        # 0 风险项时分数为 0，等级为 low
+        task.overall_risk_score = 0.0
+        task.risk_level_summary = "low"
 
         # 清除旧风险项（避免重复写入），再批量插入
         db.query(RiskItem).filter(RiskItem.task_id == task_id).delete()

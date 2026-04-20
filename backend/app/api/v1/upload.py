@@ -51,12 +51,11 @@ async def _run_workflow_background(task_id: str, document_id: str, filename: str
         return graph.invoke(initial_state, config={"configurable": {"thread_id": thread_id}})
 
     try:
+        # Phase 1: 通知 ParsingPage 解析开始
         await ws_manager.send_event(task_id, parse_progress_event(task_id, 30))
 
         loop = asyncio.get_event_loop()
         workflow_result = await loop.run_in_executor(None, _invoke)
-
-        await ws_manager.send_event(task_id, parse_progress_event(task_id, 70))
 
         # 同步写入 DB
         db = SessionLocal()
@@ -68,21 +67,40 @@ async def _run_workflow_background(task_id: str, document_id: str, filename: str
         final_status = workflow_result.get("current_status", "completed")
         risk_items = workflow_result.get("risk_items", [])
 
-        await ws_manager.send_event(task_id, auto_review_progress_event(task_id, 3))
+        # Phase 2: 通知 ParsingPage 解析完成 → 触发其跳转到 ReviewingPage（1.5s 延迟）
+        await ws_manager.send_event(task_id, parse_complete_event(task_id))
 
-        # 先发 hitl_required / review_completed，再发 parse_complete
-        # 确保前端在断开连接前能收到最终状态事件
+        # Phase 3: 等待 ReviewingPage 加载并连接 WS（ParsingPage 1.5s + 页面加载 ~0.5s）
+        await asyncio.sleep(2.5)
+
+        # Phase 4: 向 ReviewingPage 发送三层审核进度事件（名称与前端匹配）
+        await ws_manager.send_event(task_id, {
+            "event": "auto_review_layer1", "task_id": task_id,
+            "stage": "auto_reviewing", "progress": 20, "message": "文档格式校验 & 分类完成",
+        })
+        await asyncio.sleep(0.5)
+        await ws_manager.send_event(task_id, {
+            "event": "auto_review_layer2", "task_id": task_id,
+            "stage": "auto_reviewing", "progress": 55, "message": "条款识别 & 规则匹配完成",
+        })
+        await asyncio.sleep(0.5)
+        await ws_manager.send_event(task_id, {
+            "event": "auto_review_layer3", "task_id": task_id,
+            "stage": "auto_reviewing", "progress": 100, "message": "LLM 深度分析完成",
+        })
+        await asyncio.sleep(0.6)
+
+        # Phase 5: 发送最终跳转事件（名称与前端匹配）
         if final_status == "human_reviewing":
             await ws_manager.send_event(
                 task_id,
                 hitl_required_event(task_id, "reviewer-001", len(risk_items))
             )
         else:
-            overall_score = sum({"critical": 100, "high": 75, "medium": 50, "low": 25}.get(
-                i.get("risk_level", "low"), 25) for i in risk_items) / max(len(risk_items), 1)
-            await ws_manager.send_event(task_id, review_completed_event(task_id, overall_score))
-
-        await ws_manager.send_event(task_id, parse_complete_event(task_id))
+            await ws_manager.send_event(task_id, {
+                "event": "task_completed", "task_id": task_id,
+                "stage": "completed", "progress": 100, "message": "审核流程已完成",
+            })
 
     except Exception as e:
         logger.error(f"工作流后台执行失败 task_id={task_id}: {e}")

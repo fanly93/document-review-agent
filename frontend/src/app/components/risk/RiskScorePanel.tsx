@@ -22,6 +22,7 @@ const LEVEL_CONFIG: Record<string, { color: string; bg: string; label: string }>
 };
 
 export function RiskScorePanel({ score, level, criticalCount, highCount, mediumCount, lowCount }: Props) {
+  const safeScore = score ?? 0;
   const cfg = LEVEL_CONFIG[level] || LEVEL_CONFIG.medium;
 
   // 5色阶：0-20绿，20-40蓝，40-60黄，60-80橙，80-100红
@@ -34,7 +35,7 @@ export function RiskScorePanel({ score, level, criticalCount, highCount, mediumC
   };
 
   const circumference = 2 * Math.PI * 54;
-  const dashOffset = circumference - (score / 100) * circumference;
+  const dashOffset = circumference - (safeScore / 100) * circumference;
 
   return (
     <div className="bg-card border border-border rounded-xl p-6">
@@ -45,7 +46,7 @@ export function RiskScorePanel({ score, level, criticalCount, highCount, mediumC
             <circle cx="60" cy="60" r="54" fill="none" stroke="#e5e7eb" strokeWidth="8" />
             <circle
               cx="60" cy="60" r="54" fill="none"
-              stroke={getScoreColor(score)}
+              stroke={getScoreColor(safeScore)}
               strokeWidth="8"
               strokeDasharray={circumference}
               strokeDashoffset={dashOffset}
@@ -54,8 +55,8 @@ export function RiskScorePanel({ score, level, criticalCount, highCount, mediumC
             />
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-[28px]" style={{ color: getScoreColor(score) }}>
-              {score.toFixed(0)}
+            <span className="text-[28px]" style={{ color: getScoreColor(safeScore) }}>
+              {safeScore.toFixed(0)}
             </span>
             <span className="text-[11px] text-muted-foreground">风险评分</span>
           </div>

@@ -7,8 +7,13 @@ LLM 模型工厂 — 通过环境变量切换模型提供商
 - DASHSCOPE_API_KEY / DASHSCOPE_BASE_URL / DASHSCOPE_MODEL
 """
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
+
+# 确保无论模块加载顺序如何，.env 总能被读到
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent.parent.parent / ".env")
 
 
 def get_llm(
