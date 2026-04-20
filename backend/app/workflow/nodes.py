@@ -1,9 +1,37 @@
+import json
+import re
 import uuid
 from datetime import datetime, timezone
 from langgraph.types import interrupt
+from langchain_core.messages import HumanMessage, SystemMessage
+from app.core.llm_provider import get_review_llm
 from app.workflow.state import ReviewState
 
 FORBIDDEN_KEYWORDS = ["股权融资", "股权转让", "融资协议", "投资协议", "Term Sheet", "股权激励"]
+
+REVIEW_SYSTEM_PROMPT = """你是一名专业的中国法律合同审查专家。
+请分析用户提供的合同文本，识别其中的法律风险项，并以 JSON 数组格式返回，不要输出任何其他内容。
+
+每个风险项的格式如下：
+{
+  "risk_type": "风险类型标识（英文下划线）",
+  "risk_level": "low | medium | high | critical 之一",
+  "confidence": 0.0~1.0 的浮点数,
+  "confidence_category": "fact | clause | inference 之一",
+  "risk_description": "简洁的中文风险描述（50字以内）",
+  "location_page": 页码整数（无法确定时填 1）,
+  "location_paragraph": 段落序号整数（无法确定时填 0）
+}
+
+审查重点：
+1. 违约责任与赔偿条款的对等性
+2. 付款条件与逾期利息条款
+3. 合同期限与自动续约条款
+4. 争议解决条款（仲裁/诉讼/管辖地）
+5. 保密与知识产权归属条款
+6. 不可抗力条款范围
+
+只返回 JSON 数组，不要有任何 Markdown 标记或解释文字。"""
 DOCUMENT_TYPE_MAP = {
     "采购": "procurement_contract",
     "服务": "service_contract",
@@ -43,6 +71,51 @@ def parse_node(state: ReviewState) -> dict:
     }
 
 
+def _call_llm_review(content: str, doc_type: str) -> list:
+    """
+    调用 LLM 进行文档风险分析，返回标准化风险项列表。
+    如调用失败或解析失败，返回空列表（由调用方负责降级）。
+    """
+    llm = get_review_llm()
+    user_prompt = (
+        f"合同类型：{doc_type}\n\n"
+        f"合同内容：\n{content[:3000]}"
+    )
+    messages = [
+        SystemMessage(content=REVIEW_SYSTEM_PROMPT),
+        HumanMessage(content=user_prompt),
+    ]
+    response = llm.invoke(messages)
+    raw = response.content.strip()
+
+    # 兼容模型误包裹 markdown 代码块的情况
+    match = re.search(r'\[.*\]', raw, re.DOTALL)
+    if not match:
+        return []
+    items = json.loads(match.group())
+
+    result = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        risk_level = item.get("risk_level", "medium")
+        if risk_level not in ("low", "medium", "high", "critical", "info"):
+            risk_level = "medium"
+        result.append({
+            "id": str(uuid.uuid4()),
+            "risk_type": str(item.get("risk_type", "llm_review")),
+            "risk_level": risk_level,
+            "confidence": float(item.get("confidence", 0.7)),
+            "confidence_category": item.get("confidence_category", "clause"),
+            "risk_description": str(item.get("risk_description", "")),
+            "location_page": int(item.get("location_page", 1)),
+            "location_paragraph": int(item.get("location_paragraph", 0)),
+            "reviewer_status": "pending",
+            "source_references": [],
+        })
+    return result
+
+
 # ── auto_review_node ─────────────────────────────────────────
 def auto_review_node(state: ReviewState) -> dict:
     content = state.get("document_content", "")
@@ -75,15 +148,23 @@ def auto_review_node(state: ReviewState) -> dict:
             "reviewer_status": "pending", "source_references": [],
         })
 
-    # Layer 3: MVP 模拟 LLM 分析（中等风险，不触发 HITL）
-    risk_items.append({
-        "id": str(uuid.uuid4()), "risk_type": "general_review",
-        "risk_level": "medium", "confidence": 0.82,
-        "confidence_category": "clause",
-        "risk_description": "[MVP] LLM 分析：文档整体风险中等，建议仔细审查核心条款",
-        "location_page": 1, "location_paragraph": 1,
-        "reviewer_status": "pending", "source_references": [],
-    })
+    # Layer 3: LLM 深度分析（降级保护）
+    try:
+        llm_items = _call_llm_review(content, doc_type)
+        if llm_items:
+            risk_items.extend(llm_items)
+        else:
+            raise ValueError("LLM 返回空结果，触发降级")
+    except Exception as llm_err:
+        # 降级：保留原 MVP 硬编码结果，记录原因
+        risk_items.append({
+            "id": str(uuid.uuid4()), "risk_type": "general_review",
+            "risk_level": "medium", "confidence": 0.82,
+            "confidence_category": "clause",
+            "risk_description": f"[降级] LLM 调用失败，使用模拟分析（{type(llm_err).__name__}）",
+            "location_page": 1, "location_paragraph": 1,
+            "reviewer_status": "pending", "source_references": [],
+        })
 
     return {
         "current_status": "auto_reviewed",

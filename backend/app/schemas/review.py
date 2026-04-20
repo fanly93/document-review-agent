@@ -28,3 +28,12 @@ class AuthRegisterRequest(BaseModel):
 class AuthLoginRequest(BaseModel):
     email: str
     password: str
+
+
+class CompleteReviewRequest(BaseModel):
+    comment: Optional[str] = None
+
+
+class CreateAnnotationRequest(BaseModel):
+    risk_item_id: Optional[str] = None
+    content: str

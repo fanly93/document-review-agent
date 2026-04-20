@@ -69,8 +69,9 @@ async def _run_workflow_background(task_id: str, document_id: str, filename: str
         risk_items = workflow_result.get("risk_items", [])
 
         await ws_manager.send_event(task_id, auto_review_progress_event(task_id, 3))
-        await ws_manager.send_event(task_id, parse_complete_event(task_id))
 
+        # 先发 hitl_required / review_completed，再发 parse_complete
+        # 确保前端在断开连接前能收到最终状态事件
         if final_status == "human_reviewing":
             await ws_manager.send_event(
                 task_id,
@@ -80,6 +81,8 @@ async def _run_workflow_background(task_id: str, document_id: str, filename: str
             overall_score = sum({"critical": 100, "high": 75, "medium": 50, "low": 25}.get(
                 i.get("risk_level", "low"), 25) for i in risk_items) / max(len(risk_items), 1)
             await ws_manager.send_event(task_id, review_completed_event(task_id, overall_score))
+
+        await ws_manager.send_event(task_id, parse_complete_event(task_id))
 
     except Exception as e:
         logger.error(f"工作流后台执行失败 task_id={task_id}: {e}")

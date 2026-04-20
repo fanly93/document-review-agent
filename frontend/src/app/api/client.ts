@@ -2,20 +2,9 @@
  * API Client - 基于 FastAPI 接口规范 v1.0
  * Base URL: /api/v1
  * 所有接口均需 Bearer Token (JWT) 认证
- *
- * 当前模式：真实后端（USE_MOCK = false）
- * 未开发接口保留 mock 数据并在 console 中标注
  */
 
-import {
-  getMockTaskResult,
-  getMockOperations,
-  getMockAnnotations,
-  simulateAutoReviewMessages,
-} from './mock-data';
 import { getToken, ensureAuth } from './auth';
-
-const USE_MOCK = false;
 
 const BASE_URL = '/api/v1';
 // WebSocket 通过 Vite proxy 转发，使用相对路径
@@ -30,7 +19,6 @@ function getHeaders(): Record<string, string> {
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  // 确保登录（无 token 时自动登录）
   await ensureAuth();
 
   const res = await fetch(`${BASE_URL}${url}`, {
@@ -45,14 +33,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return json.data;
 }
 
-function delay(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-// 用于存储上传过程中的文件信息
-const uploadSessions: Record<string, { filename: string; fileSize: number }> = {};
-
-// ============ 四、文档上传接口 ============
+// ============ 文档上传接口 ============
 
 export async function uploadInit(body: {
   original_filename: string;
@@ -60,15 +41,6 @@ export async function uploadInit(body: {
   total_parts: number;
   content_type: string;
 }) {
-  if (USE_MOCK) {
-    await delay(300);
-    const result = getMockUploadInit(body.original_filename, body.file_size_bytes, body.total_parts);
-    uploadSessions[result.chunk_upload_id] = {
-      filename: body.original_filename,
-      fileSize: body.file_size_bytes,
-    };
-    return result;
-  }
   return request<{
     chunk_upload_id: string;
     upload_parts: { part_number: number; presigned_url: string; expires_at: string }[];
@@ -77,10 +49,7 @@ export async function uploadInit(body: {
 }
 
 export async function uploadChunk(presignedUrl: string, chunk: Blob): Promise<string> {
-  if (USE_MOCK) {
-    await delay(200 + Math.random() * 300);
-    return `"mock-etag-${Date.now()}"`;
-  }
+  // MVP：后端返回的 presigned_url 为本地占位地址，PUT 会返回 404，但 complete_upload 不校验 ETag
   const res = await fetch(presignedUrl, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/octet-stream' },
@@ -93,15 +62,6 @@ export async function uploadComplete(body: {
   chunk_upload_id: string;
   parts: { part_number: number; etag: string }[];
 }) {
-  if (USE_MOCK) {
-    await delay(500);
-    const session = uploadSessions[body.chunk_upload_id];
-    return getMockUploadComplete(
-      body.chunk_upload_id,
-      session?.filename || '未知文件.pdf',
-      session?.fileSize || 0
-    );
-  }
   return request<{
     document_id: string;
     task_id: string;
@@ -111,38 +71,39 @@ export async function uploadComplete(body: {
   }>('/upload/complete', { method: 'POST', body: JSON.stringify(body) });
 }
 
+// ============ 文档列表接口 ============
+
 export async function getDocuments(params?: {
   page?: number;
   page_size?: number;
   status?: string;
 }) {
-  // 【后端未开发】GET /api/v1/documents 文档列表接口后端尚未实现，使用 mock 数据
-  console.warn('【后端未开发】GET /api/v1/documents — 返回 mock 数据');
-  await delay(200);
-  const { MOCK_DOCUMENTS } = await import('./mock-data');
-  let items = [...MOCK_DOCUMENTS];
-  if (params?.status) {
-    const statuses = params.status.split(',');
-    items = items.filter((i) => statuses.includes(i.task_status));
-  }
-  const page = params?.page || 1;
-  const pageSize = params?.page_size || 20;
-  const start = (page - 1) * pageSize;
-  return {
-    items: items.slice(start, start + pageSize),
-    total: items.length,
-    page,
-    page_size: pageSize,
-  };
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set('page', String(params.page));
+  if (params?.page_size) qs.set('page_size', String(params.page_size));
+  if (params?.status) qs.set('status', params.status);
+  return request<{
+    items: {
+      document_id: string;
+      task_id: string;
+      original_filename: string;
+      file_size_bytes: number;
+      ocr_quality_level: string | null;
+      ocr_quality_score: number | null;
+      document_type: string | null;
+      block_reason: string | null;
+      task_status: string;
+      created_at: string;
+    }[];
+    total: number;
+    page: number;
+    page_size: number;
+  }>(`/documents?${qs}`);
 }
 
-// ============ 五、审核查询接口 ============
+// ============ 审核查询接口 ============
 
 export async function getTaskDetail(taskId: string) {
-  if (USE_MOCK) {
-    await delay(200);
-    return getMockTaskDetail(taskId);
-  }
   return request<{
     task: {
       id: string;
@@ -179,18 +140,6 @@ export async function getRiskItems(taskId: string, params?: {
   page?: number;
   page_size?: number;
 }) {
-  if (USE_MOCK) {
-    await delay(200);
-    let items = getMockRiskItems(taskId);
-    if (params?.risk_level) {
-      const levels = params.risk_level.split(',');
-      items = items.filter((i) => levels.includes(i.risk_level));
-    }
-    if (params?.reviewer_status) {
-      items = items.filter((i) => i.reviewer_status === params.reviewer_status);
-    }
-    return { items, total: items.length, page: 1, page_size: 50 };
-  }
   const qs = new URLSearchParams();
   if (params?.risk_level) qs.set('risk_level', params.risk_level);
   if (params?.reviewer_status) qs.set('reviewer_status', params.reviewer_status);
@@ -205,24 +154,61 @@ export async function getRiskItems(taskId: string, params?: {
 }
 
 export async function getTaskResult(taskId: string) {
-  // 【后端未开发】GET /api/v1/tasks/{task_id}/result 接口后端尚未实现，使用 mock 数据
-  console.warn('【后端未开发】GET /tasks/{task_id}/result — 返回 mock 数据');
-  await delay(200);
-  return getMockTaskResult(taskId);
+  return request<{
+    task_id: string;
+    overall_risk_score: number;
+    risk_level_summary: string;
+    critical_count: number;
+    high_count: number;
+    medium_count: number;
+    low_count: number;
+    hitl_triggered: boolean;
+    generated_at: string | null;
+    completed_at: string | null;
+    risk_items_summary: {
+      risk_level: string;
+      count: number;
+      approved_count: number;
+      edited_count: number;
+      rejected_count: number;
+    }[];
+  }>(`/tasks/${taskId}/result`);
 }
 
 export async function getOperations(taskId: string, params?: { page?: number; page_size?: number }) {
-  // 【后端未开发】GET /api/v1/tasks/{task_id}/operations 接口后端尚未实现，使用 mock 数据
-  console.warn('【后端未开发】GET /tasks/{task_id}/operations — 返回 mock 数据');
-  await delay(150);
-  return getMockOperations(taskId);
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set('page', String(params.page));
+  if (params?.page_size) qs.set('page_size', String(params.page_size));
+  return request<{
+    items: {
+      id: string;
+      risk_item_id: string;
+      operator_id: string;
+      action: string;
+      reject_reason: string | null;
+      operated_at: string | null;
+      edit_records: { original_value: any; new_value: any }[];
+    }[];
+    total: number;
+    page: number;
+    page_size: number;
+  }>(`/tasks/${taskId}/operations?${qs}`);
 }
 
 export async function getAnnotations(taskId: string, riskItemId?: string) {
-  // 【后端未开发】GET /api/v1/tasks/{task_id}/annotations 接口后端尚未实现，使用 mock 数据
-  console.warn('【后端未开发】GET /tasks/{task_id}/annotations — 返回 mock 数据');
-  await delay(150);
-  return getMockAnnotations(taskId);
+  const qs = new URLSearchParams();
+  if (riskItemId) qs.set('risk_item_id', riskItemId);
+  return request<{
+    items: {
+      id: string;
+      review_task_id: string;
+      risk_item_id: string | null;
+      operator_id: string;
+      content: string;
+      created_at: string;
+    }[];
+    total: number;
+  }>(`/tasks/${taskId}/annotations?${qs}`);
 }
 
 export async function getAuditLogs(taskId: string, params?: {
@@ -230,10 +216,6 @@ export async function getAuditLogs(taskId: string, params?: {
   page?: number;
   page_size?: number;
 }) {
-  if (USE_MOCK) {
-    await delay(200);
-    return getMockAuditLogs(taskId);
-  }
   const qs = new URLSearchParams();
   if (params?.event_type) qs.set('event_type', params.event_type);
   if (params?.page) qs.set('page', String(params.page));
@@ -241,7 +223,7 @@ export async function getAuditLogs(taskId: string, params?: {
   return request<{ items: any[]; total: number; page: number; page_size: number }>(`/tasks/${taskId}/audit-logs?${qs}`);
 }
 
-// ============ 六、人工审核接口 ============
+// ============ 人工审核接口 ============
 
 export async function submitOperation(taskId: string, body: {
   risk_item_id: string;
@@ -254,8 +236,6 @@ export async function submitOperation(taskId: string, body: {
   } | null;
   operated_at: string;
 }) {
-  // 后端接口契约：POST /tasks/{task_id}/operations
-  // 请求体为 { decisions: [{ risk_item_id, action, comment, edited_content, operated_at }] }
   // 字段映射：reject_reason → comment，edited_fields → edited_content
   const backendBody = {
     decisions: [{
@@ -270,7 +250,6 @@ export async function submitOperation(taskId: string, body: {
     method: 'POST',
     body: JSON.stringify(backendBody),
   });
-  // 后端返回批量结果，取第一条适配前端单条格式
   const first = Array.isArray(result) ? result[0] : result;
   return {
     operation_id: first?.operation_id ?? ('op-' + crypto.randomUUID().slice(0, 8)),
@@ -284,39 +263,35 @@ export async function addAnnotation(taskId: string, body: {
   risk_item_id?: string;
   content: string;
 }) {
-  // 【后端未开发】POST /api/v1/tasks/{task_id}/annotations 接口后端尚未实现
-  console.warn('【后端未开发】POST /tasks/{task_id}/annotations — 返回 mock 响应');
-  await delay(200);
-  return {
-    annotation_id: 'ann-' + crypto.randomUUID().slice(0, 8),
-    review_task_id: taskId,
-    risk_item_id: body.risk_item_id,
-    operator_id: 'mock-reviewer',
-    content: body.content,
-    created_at: new Date().toISOString(),
-  };
+  return request<{
+    annotation_id: string;
+    review_task_id: string;
+    risk_item_id: string | null;
+    operator_id: string;
+    content: string;
+    created_at: string;
+  }>(`/tasks/${taskId}/annotations`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 }
 
 export async function completeReview(taskId: string) {
-  // 【后端未开发】POST /api/v1/tasks/{task_id}/complete 接口后端尚未实现
-  console.warn('【后端未开发】POST /tasks/{task_id}/complete — 返回 mock 响应');
-  await delay(400);
-  return {
-    task_id: taskId,
-    status: 'completed',
-    completed_at: new Date().toISOString(),
-  };
+  return request<{
+    task_id: string;
+    status: string;
+    completed_at: string | null;
+  }>(`/tasks/${taskId}/complete`, { method: 'POST', body: JSON.stringify({}) });
 }
 
 export async function rejectTask(taskId: string, rejectReason: string) {
-  // 后端字段名为 reason（非 reject_reason）
   return request<{
     task_id: string;
     status: string;
   }>(`/tasks/${taskId}/reject`, { method: 'POST', body: JSON.stringify({ reason: rejectReason }) });
 }
 
-// ============ 七、WebSocket ============
+// ============ WebSocket ============
 
 export function connectTaskWebSocket(taskId: string, onMessage: (data: WsMessage) => void) {
   const token = getToken() ?? '';

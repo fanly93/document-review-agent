@@ -228,6 +228,65 @@ def test_state_machine(token, task_id):
     check("终态任务操作返回 409 或成功（取决于当前状态）", status in (200, 409))
 
 
+def test_documents_list(token):
+    print("\n=== 12. 文档列表测试 ===")
+    body, status, err = req("GET", "/api/v1/documents", token=token)
+    check("GET /documents 返回 200", status == 200, err)
+    data = body.get("data", {}) if body else {}
+    check("返回 items 字段", "items" in data)
+    check("返回 total 字段", "total" in data)
+    print(f"  → 文档总数: {data.get('total', 0)}")
+
+
+def test_operations_list(token, task_id):
+    print("\n=== 13. 操作历史测试 ===")
+    body, status, err = req("GET", f"/api/v1/tasks/{task_id}/operations", token=token)
+    check("GET /operations 返回 200", status == 200, err)
+    data = body.get("data", {}) if body else {}
+    check("返回 items 字段", "items" in data)
+    check("返回分页字段", "total" in data and "page" in data)
+    print(f"  → 操作记录数: {data.get('total', 0)}")
+
+
+def test_annotations(reviewer_token, task_id):
+    print("\n=== 14. 批注功能测试 ===")
+    # 创建批注
+    body, status, err = req("POST", f"/api/v1/tasks/{task_id}/annotations",
+                            {"content": "测试批注：此合同风险条款需要重点关注"}, token=reviewer_token)
+    check("POST /annotations 创建成功 201", status == 201, err)
+    ann_id = body.get("data", {}).get("annotation_id") if body else None
+    check("返回 annotation_id", bool(ann_id))
+
+    # 查询批注
+    body2, status2, err2 = req("GET", f"/api/v1/tasks/{task_id}/annotations", token=reviewer_token)
+    check("GET /annotations 返回 200", status2 == 200, err2)
+    items = body2.get("data", {}).get("items", []) if body2 else []
+    check("批注列表非空", len(items) > 0, f"实际条数: {len(items)}")
+
+
+def test_complete_and_result(reviewer_token, task_id):
+    print("\n=== 15. 完成审核与结果查询测试 ===")
+    # 查询当前任务状态
+    body, status, _ = req("GET", f"/api/v1/tasks/{task_id}", token=reviewer_token)
+    task_status = body.get("data", {}).get("task", {}).get("status") if body else None
+    print(f"  → 当前任务状态: {task_status}")
+
+    # 尝试完成审核（可能返回 409/422 取决于状态）
+    body2, status2, _ = req("POST", f"/api/v1/tasks/{task_id}/complete", token=reviewer_token)
+    check("POST /complete 返回合理状态码", status2 in (200, 409, 422),
+          f"实际状态码: {status2}")
+    print(f"  → complete 接口返回: {status2}")
+
+    # 如果任务已完成，查询结果
+    if task_status == "completed" or status2 == 200:
+        body3, status3, err3 = req("GET", f"/api/v1/tasks/{task_id}/result", token=reviewer_token)
+        check("GET /result 返回 200", status3 == 200, err3)
+        result_data = body3.get("data", {}) if body3 else {}
+        check("返回 overall_risk_score", "overall_risk_score" in result_data)
+    else:
+        print("  → 任务未完成，跳过 result 查询")
+
+
 def main():
     print("=" * 60)
     print("  后端 MVP 完整链路测试")
@@ -254,6 +313,10 @@ def main():
     test_audit_logs(legal_token, task_id)
     test_hitl_operations(reviewer_token, reviewer_id, task_id, risk_items)
     test_state_machine(legal_token, task_id)
+    test_documents_list(legal_token)
+    test_operations_list(legal_token, task_id)
+    test_annotations(reviewer_token, task_id)
+    test_complete_and_result(reviewer_token, task_id)
 
     print("\n" + "=" * 60)
     print(f"  测试结果：✓ {PASS} 通过  ✗ {FAIL} 失败")

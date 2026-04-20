@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query as FastAPIQuery
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.schemas.review import SubmitReviewRequest, RejectTaskRequest
+from app.schemas.review import SubmitReviewRequest, RejectTaskRequest, CompleteReviewRequest, CreateAnnotationRequest
 from app.services.review_service import submit_review_decisions
 from app.services.task_service import transition_task_status
+from app.services.complete_service import complete_review_task
+from app.services.annotation_service import create_annotation, list_annotations
 from app.api.deps import get_current_user
 from app.models.user import User, UserRole
 from app.core.errors import raise_error
@@ -60,4 +62,54 @@ def debug_trigger_workflow(task_id: str, db: Session = Depends(get_db),
         "final_status": result.get("current_status"),
         "risk_items_count": len(result.get("risk_items", [])),
         "thread_id": thread_id,
+    }}
+
+
+@router.post("/{task_id}/complete")
+def complete_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    graph = get_review_graph()
+    result = complete_review_task(db, task_id, current_user.id, graph)
+    return {"code": 0, "message": "success", "data": result}
+
+
+@router.post("/{task_id}/annotations", status_code=201)
+def create_task_annotation(
+    task_id: str,
+    req: CreateAnnotationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ann = create_annotation(db, task_id, req.risk_item_id, current_user.id, req.content)
+    return {"code": 0, "message": "success", "data": {
+        "annotation_id": ann.id,
+        "review_task_id": ann.task_id,
+        "risk_item_id": ann.risk_item_id,
+        "operator_id": ann.author_id,
+        "content": ann.content,
+        "created_at": ann.created_at.isoformat() if ann.created_at else None,
+    }}
+
+
+@router.get("/{task_id}/annotations")
+def get_task_annotations(
+    task_id: str,
+    risk_item_id: str = FastAPIQuery(None),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    anns = list_annotations(db, task_id, risk_item_id)
+    return {"code": 0, "message": "success", "data": {
+        "items": [{
+            "id": a.id,
+            "review_task_id": a.task_id,
+            "risk_item_id": a.risk_item_id,
+            "operator_id": a.author_id,
+            "content": a.content,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        } for a in anns],
+        "total": len(anns),
     }}

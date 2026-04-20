@@ -38,6 +38,16 @@ def submit_review_decisions(
             comment=rec.get("comment"), operated_at=rec["operated_at"],
         ))
 
+    # 将决策结果同步写回 risk_items 表
+    for updated_item in result["updated_risk_items"]:
+        db_item = db.query(RiskItem).filter(RiskItem.id == updated_item["id"]).first()
+        if db_item:
+            db_item.reviewer_status = updated_item.get("reviewer_status", db_item.reviewer_status)
+            if updated_item.get("risk_level"):
+                db_item.risk_level = updated_item["risk_level"]
+            if updated_item.get("risk_description"):
+                db_item.risk_description = updated_item["risk_description"]
+
     db.add(AuditLog(
         task_id=task_id, event_type="human_action", actor_type="human",
         operator_id=reviewer_id,

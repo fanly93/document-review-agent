@@ -22,4 +22,6 @@ def get_db():
 
 
 def create_tables():
+    # Import all models to ensure they are registered with Base.metadata
+    import app.models.annotation  # noqa: F401
     Base.metadata.create_all(bind=engine)
